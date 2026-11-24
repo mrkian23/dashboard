@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Dashboard">
+<title>Dashboard</title>
+<!--
+  iPad wall dashboard - clock + live weather (Open-Meteo, no API key).
+  Written in plain ES5 + flexbox so it runs on iOS 10 Safari (iPad 4).
+
+  Optional URL settings (add after the address, e.g. index.html?lang=it&h=12):
+    lat, lon   location           (default Florence 43.7696, 11.2558)
+    city       name shown         (default Firenze)
+    lang       en | it            (default en)
+    h          24 | 12            clock format (default 24)
+    dim        e.g. 23-6.5        night-dim hours, "off" to disable (default 23-6.5)
+-->
+<style>
+html, body { margin:0; padding:0; height:100%; overflow:hidden; background:#0b1320; }
+body {
+  font-family: -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  color:#fff; -webkit-font-smoothing:antialiased;
+  -webkit-user-select:none; -webkit-touch-callout:none; -webkit-text-size-adjust:100%;
+  cursor:default;
+}
+.bg { position:fixed; top:0; left:0; right:0; bottom:0; opacity:0;
+      -webkit-transition:opacity 4s ease; transition:opacity 4s ease; }
+#dim { position:fixed; top:0; left:0; right:0; bottom:0; background:#000; opacity:0;
+       pointer-events:none; -webkit-transition:opacity 3s; transition:opacity 3s; z-index:5; }
+
+#stage { position:absolute; left:50%; top:50%; width:1024px; height:768px;
+         margin-left:-512px; margin-top:-384px;
+         -webkit-transform-origin:50% 50%; transform-origin:50% 50%; }
+
+.row { display:-webkit-flex; display:flex; -webkit-justify-content:space-between; justify-content:space-between; }
+#top { position:absolute; left:40px; right:40px; top:40px; height:470px; }
+#bottom { position:absolute; left:40px; right:40px; top:530px; height:198px; }
+
+.card { background:rgba(255,255,255,0.12); border-radius:26px; box-sizing:border-box; }
+
+/* ---- Clock column ---- */
+#clockBox { width:540px; padding-top:6px; }
+#greet { font-size:20px; letter-spacing:4px; text-transform:uppercase; opacity:.72; font-weight:500; }
+#time { margin-top:2px; white-space:nowrap; line-height:1; }
+#hm { font-size:156px; font-weight:200; letter-spacing:-5px; }
+#side { display:inline-block; vertical-align:top; margin-left:10px; margin-top:26px; }
+#sec { display:block; font-size:42px; font-weight:300; opacity:.55; }
+#ampm { display:block; font-size:22px; font-weight:500; opacity:.7; margin-top:4px; }
+#date { font-size:32px; font-weight:300; margin-top:10px; }
+#sunWrap { margin-top:26px; position:relative; height:150px; }
+#sunTxt { position:absolute; left:0; right:0; top:76px; text-align:center; font-size:17px; opacity:.85; }
+.sunLbl { position:absolute; top:122px; font-size:15px; opacity:.7; }
+#riseLbl { left:0; } #setLbl { right:0; text-align:right; }
+
+/* ---- Current weather ---- */
+#nowBox { width:384px; padding:26px 28px; position:relative; }
+#city { font-size:15px; letter-spacing:3px; text-transform:uppercase; opacity:.7; font-weight:600; }
+#nowMain { margin-top:6px; height:150px; }
+#nowIcon { width:150px; height:150px; }
+#nowTemp { font-size:100px; font-weight:200; letter-spacing:-3px; line-height:150px; }
+#nowDesc { font-size:26px; font-weight:400; margin-top:4px; }
+#hilo { font-size:18px; opacity:.75; margin-top:4px; }
+#details { margin-top:22px; display:-webkit-flex; display:flex; -webkit-flex-wrap:wrap; flex-wrap:wrap; }
+.det { width:50%; margin-bottom:14px; }
+.det .k { font-size:13px; letter-spacing:1.5px; text-transform:uppercase; opacity:.6; }
+.det .v { font-size:22px; margin-top:3px; }
+.det svg { vertical-align:-2px; margin-left:4px; }
+
+/* ---- Forecast cards ---- */
+#hourBox { width:540px; padding:18px 14px; }
+#dayBox  { width:384px; padding:18px 14px; }
+.cardTitle { font-size:13px; letter-spacing:2px; text-transform:uppercase; opacity:.6; padding-left:8px; font-weight:600; }
+.items { display:-webkit-flex; display:flex; margin-top:10px; }
+.it { -webkit-flex:1; flex:1; text-align:center; }
+.it .t { font-size:16px; opacity:.85; }
+.it .ic { height:52px; margin-top:4px; }
+.it .tp { font-size:22px; margin-top:2px; }
+.it .lo { font-size:16px; opacity:.55; margin-left:4px; }
+.it .pp { font-size:13px; color:#9fd3ff; margin-top:3px; height:16px; }
+.it.first .t { font-weight:600; opacity:1; }
+
+#status { position:absolute; right:40px; bottom:12px; font-size:12px; opacity:.5; letter-spacing:.5px; }
+#status.warn { color:#ffd27a; opacity:.85; }
+</style>
+</head>
+<body>
+<div id="bgA" class="bg"></div>
+<div id="bgB" class="bg"></div>
+
+<div id="stage">
+  <div id="top" class="row">
+    <div id="clockBox">
+      <div id="greet">&nbsp;</div>
+      <div id="time"><span id="hm">--:--</span><span id="side"><span id="sec">--</span><span id="ampm"></span></span></div>
+      <div id="date">&nbsp;</div>
+      <div id="sunWrap">
+        <svg width="540" height="120" viewBox="0 0 540 120">
+          <line x1="10" y1="110" x2="530" y2="110" stroke="rgba(255,255,255,.35)" stroke-width="1.5"/>
+          <path d="M30 110 A240 98 0 0 1 510 110" fill="none" stroke="rgba(255,255,255,.4)" stroke-width="2" stroke-dasharray="3 7" stroke-linecap="round"/>
+          <path id="arcDone" d="" fill="none" stroke="rgba(255,220,120,.9)" stroke-width="3" stroke-linecap="round"/>
+          <circle id="sunGlow" cx="-50" cy="-50" r="20" fill="rgba(255,214,92,.28)"/>
+          <circle id="sunDot" cx="-50" cy="-50" r="10" fill="#FFD65C"/>
+        </svg>
+        <div id="sunTxt"></div>
+        <div id="riseLbl" class="sunLbl"></div>
+        <div id="setLbl" class="sunLbl"></div>
+      </div>
+    </div>
+
+    <div id="nowBox" class="card">
+      <div id="city"></div>
+      <div id="nowMain" class="row">
+        <div id="nowIcon"></div>
+        <div id="nowTemp">--°</div>
+      </div>
+      <div id="nowDesc">&nbsp;</div>
+      <div id="hilo">&nbsp;</div>
+      <div id="details"></div>
+    </div>
+  </div>
+
+  <div id="bottom" class="row">
+    <div id="hourBox" class="card">
+      <div class="cardTitle" id="hourTitle"></div>
+      <div class="items" id="hours"></div>
+    </div>
+    <div id="dayBox" class="card">
+      <div class="cardTitle" id="dayTitle"></div>
+      <div class="items" id="days"></div>
+    </div>
+  </div>
+
+  <div id="status"></div>
+</div>
+<div id="dim"></div>
+
+<script>
+(function () {
+  'use strict';
+
+  /* ---------------- settings ---------------- */
+  function parseQuery() {
+    var out = {}, s = window.location.search.substring(1);
+    if (!s) return out;
+    var parts = s.split('&');
+    for (var i = 0; i < parts.length; i++) {
+      var kv = parts[i].split('=');
+      try { out[decodeURIComponent(kv[0])] = decodeURIComponent((kv[1] || '').replace(/\+/g, ' ')); } catch (e) {}
+    }
+    return out;
+  }
+  function num(v, d) { var n = parseFloat(v); return isNaN(n) ? d : n; }
+
+  var Q = parseQuery();
+  var CFG = {
+    lat: num(Q.lat, 43.7696),
+    lon: num(Q.lon, 11.2558),
+    city: Q.city || 'Firenze',
+    lang: Q.lang === 'it' ? 'it' : 'en',
+    h12: Q.h === '12',
+    dimFrom: 23, dimTo: 6.5, dimOn: true,
+    refreshMin: 10
+  };
+  if (Q.dim === 'off') CFG.dimOn = false;
+  else if (Q.dim && Q.dim.indexOf('-') > 0) {
+    var dd = Q.dim.split('-'); CFG.dimFrom = num(dd[0], 23); CFG.dimTo = num(dd[1], 6.5);
+  }
+
+  var TXT = {
+    en: {
+      days: ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'],
+      dshort: ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'],
+      months: ['January','February','March','April','May','June','July','August','September','October','November','December'],
+      greet: ['Good night','Good morning','Good afternoon','Good evening'],
+      feels: 'Feels like', hum: 'Humidity', wind: 'Wind', rain: 'Rain today',
+      riseIn: 'Sunrise in', setIn: 'Sunset in',
+      updated: 'Updated', offline: 'Offline · last data from', loading: 'Loading weather…',
+      refreshing: 'Refreshing…', now: 'Now', today: 'Today',
+      hours: 'Next 12 hours', next: 'Next days', hi: 'H', lo: 'L'
+    },
+    it: {
+      days: ['Domenica','Lunedì','Martedì','Mercoledì','Giovedì','Venerdì','Sabato'],
+      dshort: ['Dom','Lun','Mar','Mer','Gio','Ven','Sab'],
+      months: ['gennaio','febbraio','marzo','aprile','maggio','giugno','luglio','agosto','settembre','ottobre','novembre','dicembre'],
+      greet: ['Buonanotte','Buongiorno','Buon pomeriggio','Buonasera'],
+      feels: 'Percepita', hum: 'Umidità', wind: 'Vento', rain: 'Pioggia oggi',
+      riseIn: 'Alba tra', setIn: 'Tramonto tra',
+      updated: 'Aggiornato', offline: 'Offline · ultimi dati delle', loading: 'Caricamento meteo…',
+      refreshing: 'Aggiornamento…', now: 'Ora', today: 'Oggi',
+      hours: 'Prossime 12 ore', next: 'Prossimi giorni', hi: 'Max', lo: 'Min'
+    }
+  };
+  var L = TXT[CFG.lang];
+
+  var CODES = {
+    0:['Clear sky','Sereno'], 1:['Mainly clear','Poco nuvoloso'], 2:['Partly cloudy','Parz. nuvoloso'], 3:['Overcast','Coperto'],
+    45:['Fog','Nebbia'], 48:['Freezing fog','Nebbia gelata'],
+    51:['Light drizzle','Pioviggine'], 53:['Drizzle','Pioviggine'], 55:['Heavy drizzle','Pioviggine intensa'],
+    56:['Freezing drizzle','Pioviggine gelata'], 57:['Freezing drizzle','Pioviggine gelata'],
+    61:['Light rain','Pioggia debole'], 63:['Rain','Pioggia'], 65:['Heavy rain','Pioggia forte'],
+    66:['Freezing rain','Pioggia gelata'], 67:['Freezing rain','Pioggia gelata'],
+    71:['Light snow','Neve debole'], 73:['Snow','Neve'], 75:['Heavy snow','Neve forte'], 77:['Snow grains','Nevischio'],
+    80:['Light showers','Rovesci deboli'], 81:['Showers','Rovesci'], 82:['Heavy showers','Rovesci forti'],
+    85:['Snow showers','Rovesci di neve'], 86:['Heavy snow showers','Forti rovesci di neve'],
+    95:['Thunderstorm','Temporale'], 96:['Storm with hail','Temporale e grandine'], 99:['Storm with hail','Temporale e grandine']
+  };
+  function desc(c) { var e = CODES[c]; return e ? e[CFG.lang === 'it' ? 1 : 0] : '—'; }
+  function kindOf(c) {
+    if (c === 0) return 'clear';
+    if (c === 1 || c === 2) return 'partly';
+    if (c === 3) return 'cloudy';
+    if (c === 45 || c === 48) return 'fog';
+    if (c >= 51 && c <= 57) return 'drizzle';
+    if ((c >= 61 && c <= 67) || (c >= 80 && c <= 82)) return 'rain';
+    if ((c >= 71 && c <= 77) || c === 85 || c === 86) return 'snow';
+    if (c >= 95) return 'thunder';
+    return 'cloudy';
+  }
+
+  /* ---------------- helpers ---------------- */
+  function $(id) { return document.getElementById(id); }
+  function pad(n) { return (n < 10 ? '0' : '') + n; }
+  function ymd(d) { return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
+  // Parse "2026-11-24T07:15" as local time (old Safari treats it as UTC otherwise)
+  function parseLocal(s) {
+    return new Date(+s.substr(0, 4), +s.substr(5, 2) - 1, +s.substr(8, 2),
+                    +(s.substr(11, 2) || 0), +(s.substr(14, 2) || 0));
+  }
+  function fmtTime(d) {
+    var h = d.getHours(), m = pad(d.getMinutes());
+    if (!CFG.h12) return pad(h) + ':' + m;
+    var h2 = h % 12; if (h2 === 0) h2 = 12;
+    return h2 + ':' + m + (h < 12 ? ' am' : ' pm');
+  }
+  function fmtHour(d) {
+    var h = d.getHours();
+    if (!CFG.h12) return pad(h) + ':00';
+    var h2 = h % 12; if (h2 === 0) h2 = 12;
+    return h2 + (h < 12 ? 'am' : 'pm');
+  }
+  function fmtDur(ms) {
+    var m = Math.max(0, Math.round(ms / 60000)), h = Math.floor(m / 60);
+    m = m % 60;
+    return (h > 0 ? h + 'h ' : '') + m + 'm';
+  }
+  function deg(v) { return Math.round(v) + '°'; }
+
+  /* ---------------- icons (inline SVG) ---------------- */
+  var uid = 0;
+  function sun(cx, cy, r, spin) {
+    var rays = '';
+    for (var i = 0; i < 8; i++) {
+      var a = i * Math.PI / 4, c = Math.cos(a), s = Math.sin(a);
+      rays += '<line x1="' + (cx + c * (r + 4)).toFixed(1) + '" y1="' + (cy + s * (r + 4)).toFixed(1) +
+              '" x2="' + (cx + c * (r + 9)).toFixed(1) + '" y2="' + (cy + s * (r + 9)).toFixed(1) + '"/>';
+    }
+    var anim = spin ? '<animateTransform attributeName="transform" type="rotate" from="0 ' + cx + ' ' + cy +
+                      '" to="360 ' + cx + ' ' + cy + '" dur="60s" repeatCount="indefinite"/>' : '';
+    return '<g stroke="#FFD65C" stroke-width="3" stroke-linecap="round">' + rays + anim + '</g>' +
+           '<circle cx="' + cx + '" cy="' + cy + '" r="' + r + '" fill="#FFD65C"/>';
+  }
+  function moon(cx, cy, r) {
+    var id = 'mk' + (uid++);
+    return '<mask id="' + id + '"><rect width="64" height="64" fill="#fff"/>' +
+           '<circle cx="' + (cx + r * 0.55) + '" cy="' + (cy - r * 0.4) + '" r="' + (r * 0.85) + '" fill="#000"/></mask>' +
+           '<circle cx="' + cx + '" cy="' + cy + '" r="' + r + '" fill="#F3EED2" mask="url(#' + id + ')"/>';
+  }
+  function cloud(dx, dy, sc, col) {
+    return '<g transform="translate(' + dx + ' ' + dy + ') scale(' + sc + ')" fill="' + col + '">' +
+           '<circle cx="22" cy="38" r="9"/><circle cx="34" cy="31" r="13"/><circle cx="46" cy="38" r="9"/>' +
+           '<rect x="22" y="33" width="24" height="14"/></g>';
+  }
+  function drops(kind) {
+    var xs = [24, 33, 42], out = '', i;
+    if (kind === 'snow') {
+      for (i = 0; i < 3; i++) out += '<circle cx="' + (xs[i] - 2) + '" cy="' + (i === 1 ? 55 : 50) + '" r="2.8" fill="#fff"/>';
+      return out;
+    }
+    var len = kind === 'drizzle' ? 4 : 8;
+    for (i = 0; i < 3; i++) {
+      out += '<line x1="' + xs[i] + '" y1="46" x2="' + (xs[i] - len * 0.4) + '" y2="' + (46 + len) +
+             '" stroke="#7EC4FF" stroke-width="3" stroke-linecap="round"/>';
+    }
+    return out;
+  }
+  function icon(kind, isDay, size, anim) {
+    var b = '';
+    switch (kind) {
+      case 'clear':   b = isDay ? sun(32, 32, 12, anim) : moon(32, 32, 15); break;
+      case 'partly':  b = (isDay ? sun(24, 22, 9, anim) : moon(25, 22, 11)) + cloud(6, 8, 0.85, '#F2F5F9'); break;
+      case 'cloudy':  b = cloud(10, -6, 0.75, '#AEB9C7') + cloud(-2, 3, 1, '#E6ECF3'); break;
+      case 'fog':     b = cloud(0, -9, 1, '#DDE3EA') +
+                          '<g stroke="#CFD8E3" stroke-width="3" stroke-linecap="round">' +
+                          '<line x1="14" y1="46" x2="50" y2="46"/><line x1="18" y1="53" x2="46" y2="53"/></g>'; break;
+      case 'drizzle':
+      case 'rain':
+      case 'snow':    b = cloud(0, -7, 1, '#DCE3EC') + drops(kind); break;
+      case 'thunder': b = cloud(0, -8, 1, '#B9C3D0') +
+                          '<polygon points="34,41 26,53 32,53 28,63 40,48 34,48 37,41" fill="#FFD65C"/>'; break;
+    }
+    return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 64 64">' + b + '</svg>';
+  }
+  function windArrow(dir) {
+    // arrow points where the wind is blowing to
+    return '<svg width="18" height="18" viewBox="0 0 18 18"><g transform="rotate(' + ((dir + 180) % 360) + ' 9 9)">' +
+           '<polygon points="9,1 14,15 9,12 4,15" fill="#fff"/></g></svg>';
+  }
+
+  /* ---------------- background ---------------- */
+  var bgCur = 'bgA', bgKey = '';
+  function setBg(cols) {
+    var key = cols.join(',');
+    if (key === bgKey) return;
+    bgKey = key;
+    var next = bgCur === 'bgA' ? 'bgB' : 'bgA';
+    $(next).style.background = 'linear-gradient(to bottom, ' + cols[0] + ' 0%, ' + cols[1] + ' 100%)';
+    $(next).style.opacity = '1';
+    $(bgCur).style.opacity = '0';
+    bgCur = next;
+  }
+  function theme(kind, isDay, twilight) {
+    if (kind === 'thunder') return ['#1d2331', '#454a66'];
+    if (!isDay) {
+      if (kind === 'clear' || kind === 'partly') return ['#090e22', '#26355f'];
+      if (kind === 'rain' || kind === 'drizzle') return ['#0c131c', '#283442'];
+      if (kind === 'snow') return ['#1a2432', '#46566b'];
+      return ['#11171f', '#323d4b'];
+    }
+    if (twilight && (kind === 'clear' || kind === 'partly')) return ['#3b3f7c', '#e88a57'];
+    switch (kind) {
+      case 'clear':  return ['#1d6bd3', '#5cc1ef'];
+      case 'partly': return ['#3566a6', '#84b4e0'];
+      case 'fog':    return ['#646f7c', '#a4adb7'];
+      case 'drizzle':
+      case 'rain':   return ['#2e4155', '#5a6e83'];
+      case 'snow':   return ['#57718f', '#9fb4ca'];
+      default:       return ['#526276', '#8f9eaf'];
+    }
+  }
+
+  /* ---------------- state ---------------- */
+  var wx = null, wxTime = 0, offline = false, lastMin = -1;
+  var CACHE = 'wallDash_wx_v1';
+  try {
+    var c = JSON.parse(localStorage.getItem(CACHE) || 'null');
+    if (c && c.d && c.lat === CFG.lat && c.lon === CFG.lon) { wx = c.d; wxTime = c.t; }
+  } catch (e) {}
+
+  function sunTimes(now) {
+    if (!wx || !wx.daily || !wx.daily.time) return null;
+    var key = ymd(now), d = wx.daily, i = -1;
+    for (var k = 0; k < d.time.length; k++) if (d.time[k] === key) { i = k; break; }
+    if (i < 0) return null;
+    return {
+      rise: parseLocal(d.sunrise[i]), set: parseLocal(d.sunset[i]),
+      riseTomorrow: d.sunrise[i + 1] ? parseLocal(d.sunrise[i + 1]) : null
+    };
+  }
+
+  /* ---------------- clock ---------------- */
+  function tick() {
+    var now = new Date(), h = now.getHours();
+    var hh = h;
+    if (CFG.h12) { hh = h % 12; if (hh === 0) hh = 12; }
+    $('hm').innerHTML = (CFG.h12 ? hh : pad(hh)) + ':' + pad(now.getMinutes());
+    $('sec').innerHTML = pad(now.getSeconds());
+    $('ampm').innerHTML = CFG.h12 ? (h < 12 ? 'AM' : 'PM') : '';
+
+    if (now.getMinutes() !== lastMin) {
+      lastMin = now.getMinutes();
+      onMinute(now);
+    }
+    setTimeout(tick, 1000 - (new Date().getMilliseconds()) + 15);
+  }
+
+  function onMinute(now) {
+    var h = now.getHours(), hf = h + now.getMinutes() / 60;
+    var gi = (h >= 5 && h < 12) ? 1 : (h >= 12 && h < 18) ? 2 : (h >= 18 && h < 22) ? 3 : 0;
+    $('greet').innerHTML = L.greet[gi];
+    $('date').innerHTML = L.days[now.getDay()] + ' ' + now.getDate() + ' ' + L.months[now.getMonth()];
+
+    // night dimming
+    var dim = false;
+    if (CFG.dimOn) {
+      dim = CFG.dimFrom > CFG.dimTo ? (hf >= CFG.dimFrom || hf < CFG.dimTo) : (hf >= CFG.dimFrom && hf < CFG.dimTo);
+    }
+    $('dim').style.opacity = dim ? '0.55' : '0';
+
+    renderSun(now);
+    renderTheme(now);
+    renderStatus();
+
+    // weather refresh when stale
+    if (!wx || (Date.now() - wxTime) > CFG.refreshMin * 60000) fetchWeather();
+
+    // daily reload at 03:30 keeps the old iPad's memory fresh
+    if (h === 3 && now.getMinutes() === 30 && (Date.now() - bootTime) > 3600000) window.location.reload();
+  }
+
+  function renderSun(now) {
+    var st = sunTimes(now), dot = $('sunDot'), glow = $('sunGlow');
+    if (!st) {
+      $('sunTxt').innerHTML = ''; $('riseLbl').innerHTML = ''; $('setLbl').innerHTML = '';
+      dot.setAttribute('cx', -50); glow.setAttribute('cx', -50); $('arcDone').setAttribute('d', '');
+      return;
+    }
+    $('riseLbl').innerHTML = '↑ ' + fmtTime(st.rise);
+    $('setLbl').innerHTML = fmtTime(st.set) + ' ↓';
+    var t = now.getTime(), r = st.rise.getTime(), s = st.set.getTime();
+    if (t >= r && t <= s) {
+      var f = (t - r) / (s - r), th = Math.PI * (1 - f);
+      var x = 270 + 240 * Math.cos(th), y = 110 - 98 * Math.sin(th);
+      dot.setAttribute('cx', x.toFixed(1)); dot.setAttribute('cy', y.toFixed(1));
+      glow.setAttribute('cx', x.toFixed(1)); glow.setAttribute('cy', y.toFixed(1));
+      $('arcDone').setAttribute('d', f > 0.003 ? 'M30 110 A240 98 0 0 1 ' + x.toFixed(1) + ' ' + y.toFixed(1) : '');
+      $('sunTxt').innerHTML = L.setIn + ' ' + fmtDur(s - t);
+    } else {
+      dot.setAttribute('cx', -50); glow.setAttribute('cx', -50); $('arcDone').setAttribute('d', '');
+      var next = t < r ? r : (st.riseTomorrow ? st.riseTomorrow.getTime() : 0);
+      $('sunTxt').innerHTML = next ? L.riseIn + ' ' + fmtDur(next - t) : '';
+    }
+  }
+
+  function renderTheme(now) {
+    var h = now.getHours();
+    if (!wx || !wx.current) { setBg(theme('clear', h >= 7 && h < 18, false)); return; }
+    var st = sunTimes(now), tw = false, t = now.getTime();
+    if (st) tw = Math.abs(t - st.rise.getTime()) < 45 * 60000 || Math.abs(t - st.set.getTime()) < 45 * 60000;
+    setBg(theme(kindOf(wx.current.weather_code), wx.current.is_day === 1, tw));
+  }
+
+  function renderStatus(msg) {
+    var el = $('status');
+    if (msg) { el.className = ''; el.innerHTML = msg; return; }
+    if (!wx) { el.className = ''; el.innerHTML = L.loading; return; }
+    var d = new Date(wxTime);
+    el.className = offline ? 'warn' : '';
+    el.innerHTML = (offline ? L.offline : L.updated) + ' ' + fmtTime(d) + ' · Open-Meteo';
+  }
+
+  /* ---------------- weather ---------------- */
+  function apiUrl(proto) {
+    return proto + '//api.open-meteo.com/v1/forecast?latitude=' + CFG.lat + '&longitude=' + CFG.lon +
+      '&current=temperature_2m,apparent_temperature,relative_humidity_2m,is_day,weather_code,wind_speed_10m,wind_direction_10m' +
+      '&hourly=temperature_2m,weather_code,precipitation_probability,is_day' +
+      '&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,precipitation_probability_max' +
+      '&timezone=auto&forecast_days=6&wind_speed_unit=kmh';
+  }
+
+  var loading = false;
+  function fetchWeather(manual) {
+    if (loading) return;
+    loading = true;
+    if (manual) renderStatus(L.refreshing);
+    get(apiUrl('https:'), function (ok, data) {
+      // iOS 10 may reject newer certificates; plain http works when the page itself is http
+      if (!ok && window.location.protocol !== 'https:') {
+        get(apiUrl('http:'), done);
+      } else done(ok, data);
+    });
+    function done(ok, data) {
+      loading = false;
+      if (ok && data && data.current) {
+        wx = data; wxTime = Date.now(); offline = false;
+        try { localStorage.setItem(CACHE, JSON.stringify({ t: wxTime, d: wx, lat: CFG.lat, lon: CFG.lon })); } catch (e) {}
+        renderWeather();
+      } else {
+        offline = true;
+        wxTime = wxTime || 0;
+        // try again in 2 minutes
+        setTimeout(function () { fetchWeather(); }, 120000);
+      }
+      var now = new Date();
+      renderSun(now); renderTheme(now); renderStatus();
+    }
+  }
+
+  function get(url, cb) {
+    var x, finished = false;
+    try { x = new XMLHttpRequest(); } catch (e) { cb(false); return; }
+    var timer = setTimeout(function () { if (!finished) { finished = true; try { x.abort(); } catch (e) {} cb(false); } }, 15000);
+    x.onreadystatechange = function () {
+      if (x.readyState !== 4 || finished) return;
+      finished = true; clearTimeout(timer);
+      if (x.status >= 200 && x.status < 300) {
+        var d = null;
+        try { d = JSON.parse(x.responseText); } catch (e) {}
+        cb(!!d, d);
+      } else cb(false);
+    };
+    try { x.open('GET', url, true); x.send(); } catch (e) { if (!finished) { finished = true; clearTimeout(timer); cb(false); } }
+  }
+
+  function renderWeather() {
+    if (!wx || !wx.current) return;
+    var c = wx.current, d = wx.daily, hr = wx.hourly, now = new Date();
+    $('city').innerHTML = CFG.city;
+    $('nowIcon').innerHTML = icon(kindOf(c.weather_code), c.is_day === 1, 150, true);
+    $('nowTemp').innerHTML = deg(c.temperature_2m);
+    $('nowDesc').innerHTML = desc(c.weather_code);
+
+    var ti = 0, key = ymd(now);
+    for (var k = 0; k < d.time.length; k++) if (d.time[k] === key) { ti = k; break; }
+    $('hilo').innerHTML = L.hi + ' ' + deg(d.temperature_2m_max[ti]) + '  ·  ' + L.lo + ' ' + deg(d.temperature_2m_min[ti]);
+
+    var rainP = d.precipitation_probability_max ? d.precipitation_probability_max[ti] : null;
+    $('details').innerHTML =
+      det(L.feels, deg(c.apparent_temperature)) +
+      det(L.hum, Math.round(c.relative_humidity_2m) + '%') +
+      det(L.wind, Math.round(c.wind_speed_10m) + ' km/h' + windArrow(c.wind_direction_10m || 0)) +
+      det(L.rain, rainP === null || rainP === undefined ? '—' : rainP + '%');
+
+    // next 12 hours, every 2 hours
+    var nowKey = key + 'T' + pad(now.getHours()) + ':00', start = 0;
+    for (k = 0; k < hr.time.length; k++) if (hr.time[k] >= nowKey) { start = k; break; }
+    var html = '';
+    for (var n = 0; n < 7; n++) {
+      var i = start + n * 2;
+      if (i >= hr.time.length) break;
+      var p = hr.precipitation_probability ? hr.precipitation_probability[i] : null;
+      html += '<div class="it' + (n === 0 ? ' first' : '') + '">' +
+        '<div class="t">' + (n === 0 ? L.now : fmtHour(parseLocal(hr.time[i]))) + '</div>' +
+        '<div class="ic">' + (n === 0 ? icon(kindOf(c.weather_code), c.is_day === 1, 52)
+                                       : icon(kindOf(hr.weather_code[i]), hr.is_day ? hr.is_day[i] === 1 : true, 52)) + '</div>' +
+        '<div class="tp">' + deg(n === 0 ? c.temperature_2m : hr.temperature_2m[i]) + '</div>' +
+        '<div class="pp">' + (p >= 20 ? p + '%' : '') + '</div></div>';
+    }
+    $('hours').innerHTML = html;
+
+    // next 5 days starting today
+    html = '';
+    for (n = 0; n < 5; n++) {
+      i = ti + n;
+      if (i >= d.time.length) break;
+      var dt = parseLocal(d.time[i]);
+      var pd = d.precipitation_probability_max ? d.precipitation_probability_max[i] : null;
+      html += '<div class="it' + (n === 0 ? ' first' : '') + '">' +
+        '<div class="t">' + (n === 0 ? L.today : L.dshort[dt.getDay()]) + '</div>' +
+        '<div class="ic">' + icon(kindOf(d.weather_code[i]), true, 52) + '</div>' +
+        '<div class="tp">' + deg(d.temperature_2m_max[i]) + '<span class="lo">' + deg(d.temperature_2m_min[i]) + '</span></div>' +
+        '<div class="pp">' + (pd >= 20 ? pd + '%' : '') + '</div></div>';
+    }
+    $('days').innerHTML = html;
+  }
+  function det(k, v) { return '<div class="det"><div class="k">' + k + '</div><div class="v">' + v + '</div></div>'; }
+
+  /* ---------------- layout scaling ---------------- */
+  function fit() {
+    var w = window.innerWidth, h = window.innerHeight;
+    var s = Math.min(w / 1024, h / 768);
+    var tr = 'scale(' + s + ')';
+    var st = $('stage').style;
+    st.webkitTransform = tr; st.transform = tr;
+  }
+
+  /* ---------------- boot ---------------- */
+  var bootTime = Date.now();
+  $('hourTitle').innerHTML = L.hours;
+  $('dayTitle').innerHTML = L.next;
+  $('city').innerHTML = CFG.city;
+  fit();
+  window.addEventListener('resize', fit);
+  window.addEventListener('orientationchange', function () { setTimeout(fit, 300); });
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden && (Date.now() - wxTime) > CFG.refreshMin * 60000) fetchWeather();
+  });
+  // tap anywhere to refresh the weather
+  document.addEventListener('touchend', function () { fetchWeather(true); });
+  document.addEventListener('touchmove', function (e) { e.preventDefault(); }, false);
+
+  if (wx) { offline = (Date.now() - wxTime) > CFG.refreshMin * 60000; renderWeather(); }
+  tick();
+  fetchWeather();
+})();
+</script>
+</body>
+</html>
