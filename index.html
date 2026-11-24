@@ -571,21 +571,29 @@ body {
   function det(k, v) { return '<div class="det"><div class="k">' + k + '</div><div class="v">' + v + '</div></div>'; }
 
   /* ---------------- radio ---------------- */
-  // BBC worldwide HLS streams. To add/change stations edit this list: [name, stream id].
-  // The BBC changes these addresses now and then; the id is the part like "bbc_radio_two".
+  // BBC worldwide streams: [name, stream id, tile text, colour 1, colour 2, akamai pool, extra backup url].
+  // The BBC changes these addresses now and then. Each station is tried on several addresses in turn.
   var STATIONS = [
-    ['BBC Radio 1', 'bbc_radio_one', '1', '#ff4f8b', '#7b2a8c'],
-    ['BBC Radio 2', 'bbc_radio_two', '2', '#ffa23a', '#d4462a'],
-    ['BBC Radio 3', 'bbc_radio_three', '3', '#e0565b', '#6b2440'],
-    ['BBC Radio 4', 'bbc_radio_fourfm', '4', '#2fb5b0', '#1d4f7a'],
-    ['BBC Radio 6 Music', 'bbc_6music', '6', '#3ccf86', '#14615a'],
-    ['BBC World Service', 'bbc_world_service', 'WS', '#5a7cff', '#2b2d7a']
+    ['BBC Radio 1', 'bbc_radio_one', '1', '#ff4f8b', '#7b2a8c', '01505109'],
+    ['BBC Radio 2', 'bbc_radio_two', '2', '#ffa23a', '#d4462a', '74208725'],
+    ['BBC Radio 3', 'bbc_radio_three', '3', '#e0565b', '#6b2440', '23461179'],
+    ['BBC Radio 4', 'bbc_radio_fourfm', '4', '#2fb5b0', '#1d4f7a', '55057080'],
+    ['BBC Radio 6 Music', 'bbc_6music', '6', '#3ccf86', '#14615a', '81827798'],
+    ['BBC World Service', 'bbc_world_service', 'WS', '#5a7cff', '#2b2d7a', '87948813',
+     'http://stream.live.vc.bbcmedia.co.uk/bbc_world_service']
   ];
-  function streamUrl(id, proto) {
-    return proto + '//as-hls-ww-live.akamaized.net/pool_904/live/ww/' + id + '/' + id + '.isml/' +
-           id + '-audio%3d96000.norewind.m3u8';
+  function streamUrls(st) {
+    var id = st[1], path = '/live/ww/' + id + '/' + id + '.isml/' + id + '-audio%3d96000.norewind.m3u8';
+    var list = [
+      'https://as-hls-ww-live.akamaized.net/pool_' + st[5] + path,
+      'http://as-hls-ww-live.akamaized.net/pool_' + st[5] + path,
+      'http://lsn.lv/bbcradio.m3u8?station=' + id + '&bitrate=96000',
+      'https://as-hls-ww-live.akamaized.net/pool_904' + path
+    ];
+    if (st[6]) list.push(st[6]);
+    return list;
   }
-  var player = $('player'), rIdx = 1, rWant = false, rHttp = false, rRetry = null;
+  var player = $('player'), rIdx = 1, rWant = false, rTry = 0, rRetry = null, rWatch = null;
   try { var si = parseInt(localStorage.getItem('wallDash_station'), 10); if (si >= 0 && si < STATIONS.length) rIdx = si; } catch (e) {}
 
   var ICON_PLAY = '<svg width="40" height="40" viewBox="0 0 40 40"><polygon points="12,6 34,20 12,34" fill="#fff" stroke="#fff" stroke-width="3" stroke-linejoin="round"/></svg>';
@@ -611,12 +619,27 @@ body {
   }
   function rStart() {
     clearTimeout(rRetry);
-    rWant = true; rHttp = false;
+    rWant = true; rTry = 0;
     rRender('conn');
-    rPlayUrl(streamUrl(STATIONS[rIdx][1], 'https:'));
+    rAttempt();
+  }
+  function rAttempt() {
+    var urls = streamUrls(STATIONS[rIdx]);
+    if (rTry >= urls.length) { rGiveUp(); return; }
+    rPlayUrl(urls[rTry]);
+    // if nothing plays within 15 s, move on to the next address
+    clearTimeout(rWatch);
+    var mine = rTry;
+    rWatch = setTimeout(function () { if (rWant && rTry === mine && player.paused !== false) rFail(); }, 15000);
+  }
+  function rGiveUp() {
+    clearTimeout(rWatch);
+    rRender('err');
+    clearTimeout(rRetry);
+    rRetry = setTimeout(function () { if (rWant) rStart(); }, 30000);
   }
   function rStop() {
-    clearTimeout(rRetry);
+    clearTimeout(rRetry); clearTimeout(rWatch);
     rWant = false;
     try { player.pause(); player.removeAttribute('src'); player.load(); } catch (e) {}
     rRender('off');
@@ -628,12 +651,10 @@ body {
   }
   function rFail() {
     if (!rWant) return;
-    if (!rHttp) { rHttp = true; rPlayUrl(streamUrl(STATIONS[rIdx][1], 'http:')); return; }
-    rRender('err');
-    clearTimeout(rRetry);
-    rRetry = setTimeout(function () { if (rWant) rStart(); }, 30000);
+    rTry++;
+    rAttempt();
   }
-  player.addEventListener('playing', function () { if (rWant) rRender('live'); });
+  player.addEventListener('playing', function () { if (rWant) { clearTimeout(rWatch); rRender('live'); } });
   player.addEventListener('waiting', function () { if (rWant) rRender('conn'); });
   player.addEventListener('error', rFail);
   player.addEventListener('ended', function () {
