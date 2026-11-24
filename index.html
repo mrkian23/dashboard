@@ -177,6 +177,9 @@ body {
 (function () {
   'use strict';
 
+  // Bump this number every time you upload a new version: open dashboards update themselves.
+  var DASH_VERSION = '5';
+
   /* ---------------- settings ---------------- */
   function parseQuery() {
     var out = {}, s = window.location.search.substring(1);
@@ -476,7 +479,7 @@ body {
     if (!wx) { el.className = ''; el.innerHTML = L.loading; return; }
     var d = new Date(wxTime);
     el.className = offline ? 'warn' : '';
-    el.innerHTML = (offline ? L.offline : L.updated) + ' ' + fmtTime(d) + ' · Open-Meteo';
+    el.innerHTML = (offline ? L.offline : L.updated) + ' ' + fmtTime(d) + ' · Open-Meteo · v' + DASH_VERSION;
   }
 
   /* ---------------- weather ---------------- */
@@ -664,6 +667,32 @@ body {
   $('rPrev').addEventListener('click', function () { rStep(-1); });
   $('rNext').addEventListener('click', function () { rStep(1); });
   rRender('off');
+
+  /* ---------------- self-update ---------------- */
+  // Home-screen web apps keep an old copy of the page, so check the server for a newer version.
+  function hardReload() {
+    var q = window.location.search.replace(/[?&]v=[^&]*/g, '').replace(/^&/, '?');
+    var sep = q ? (q.charAt(0) === '?' ? '&' : '?') : '?';
+    window.location.replace(window.location.pathname + q + sep + 'v=' + Date.now());
+  }
+  function checkUpdate() {
+    if (rWant) return;            // never interrupt the radio
+    var x = new XMLHttpRequest();
+    x.onreadystatechange = function () {
+      if (x.readyState !== 4 || x.status !== 200) return;
+      var m = /DASH_VERSION = '([^']+)'/.exec(x.responseText);
+      if (m && m[1] !== DASH_VERSION) hardReload();
+    };
+    try { x.open('GET', window.location.pathname + '?check=' + Date.now(), true); x.send(); } catch (e) {}
+  }
+  setInterval(checkUpdate, 30 * 60000);
+  setTimeout(checkUpdate, 20000);
+
+  // hold a finger on the clock for 2 seconds to reload
+  var holdT = null;
+  $('time').addEventListener('touchstart', function () { holdT = setTimeout(hardReload, 2000); });
+  $('time').addEventListener('touchend', function () { clearTimeout(holdT); });
+  $('time').addEventListener('touchcancel', function () { clearTimeout(holdT); });
 
   /* ---------------- layout scaling ---------------- */
   function fit() {
